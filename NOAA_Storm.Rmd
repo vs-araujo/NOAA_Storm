@@ -1,0 +1,334 @@
+---
+title: "Exploratory Data Analysis of the NOAA Storm Database"
+author: "Vítor dos Santos Araujo"
+output: "github_document"
+always_allow_html: true
+---
+
+## Synopsis
+
+The goal of this analysis was to use the **U.S. National Oceanic and Atmospheric Administration’s (NOAA) Storm Database** to discover which type of events were most harmful with respect to population health and economy in the time period recorded (from 1950 to 2011).
+
+The criteria used to define the most harmful events were the number of **injuries** and **fatalities** recorded for each fo them, while in respect to the economy it was the total **property** and **crop damage**.
+
+During the analysis it was discovered that there was some inconsistencies in the **Event Type** information, like the absence of a standard and some overlapping of events. So some data cleaning was needed.
+
+As result of the analysis, it was discovered that, from the events recorded, **Tornadoes** were responsible for most of the health problems, while **Floods** caused the greatest part of the economic damage.
+
+## Data Processing
+
+Loading libraries
+
+```{r message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+```
+
+Downloading the file and assigning it to the variable StormData .
+
+```{r cache=TRUE}
+file_url = "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+download.file(file_url,
+              "StormData.csv.bz2")
+StormData <- read.csv("StormData.csv.bz2")
+```
+
+Since the goal of this analysis is to find the relation between different event types and it’s consequences to the economy and population health, I will use the **Event Type**, **Injuries**, **Fatalities**, **Property Damage** and **Crop Damage** information from `StormData` , as well as the indicators of the magnitude of the damages `PROPDMGEXP` and `CROPDMGEXP`.
+
+First, I’ll check if the is any missing data for these columns:
+
+```{r}
+print(with(StormData,
+           c(EVTYPE = sum(is.na(EVTYPE)),
+             INJURIES = sum(is.na(INJURIES)),
+             FATALITIES = sum(is.na(FATALITIES)),
+             PROPDMG = sum(is.na(PROPDMG)),
+             CROPDMG = sum(is.na(CROPDMG)),
+             PROPDMGEXP = sum(is.na(PROPDMGEXP)),
+             CROPDMGEXP = sum(is.na(CROPDMGEXP))
+             )
+           )
+      )
+```
+
+Since there is no missing data let’s start the analysis for the impact on health and economy.
+
+## Population health
+
+First, I’ll group the observations by **Event Type**. The `health_data` will show the number of events and total numbers of **Injuries**, **Fatalities**.
+
+```{r}
+health_data <- StormData %>%
+    group_by(EVTYPE) %>%
+    summarise(N.EVENTS = n(),
+              INJURIES = sum(INJURIES),
+              FATALITIES = sum(FATALITIES)
+              )
+str(health_data)
+```
+
+It shows that there are 985 different **EVTYPEs** in the `StormData`, but looking at the [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) (Item 7), there seems to be less than 100 possible types. Let’s make a small test to check what the problem might be:
+
+```{r}
+health_data %>%
+select(EVTYPE, N.EVENTS) %>%
+arrange(desc(N.EVENTS)) %>%
+head()%>%
+kable() %>%
+kable_styling(full_width = F)
+```
+
+It seems like there might be some problem with the standards to register the EVTYPE , since *THUNDERSTORM* may also appear abbreviated as *TSTM*. Let’s check if there are more inconsistencies of this type:
+
+```{r}
+unique(grep("HAIL", health_data$EVTYPE, value = TRUE))
+```
+
+So there is a big inconsistency in the `EVTYPE` field. Moreover, there are some cases of overlapping in this field. Which is not surprising, since they can happen at the same time, as *“TORNADOES, TSTM WIND, HAIL”*. With that in mind, first I will focus only on events that caused **injuries** or **fatalities** to find out which of them are most harmful with respect to population health.
+
+Filtering only the events that caused injuries or fatalities and also calculate the percentage of this outcomes related to them:
+
+```{r}
+health_data <- health_data %>%
+    filter(INJURIES > 0 | FATALITIES > 0) %>%
+    mutate(PERC.FATALITIES = FATALITIES / sum(FATALITIES),
+           PERC.INJURIES = INJURIES / sum(INJURIES)) %>%
+    select(EVTYPE,
+           N.EVENTS,
+           FATALITIES,
+           PERC.FATALITIES,
+           INJURIES,
+           PERC.INJURIES
+           )
+str(health_data)
+```
+
+Let’s see what are the events related most of the **fatalities**
+
+```{r}
+health_data %>%
+    select(EVTYPE, FATALITIES, PERC.FATALITIES) %>%
+    arrange(desc(FATALITIES)) %>%
+    head(10) %>%
+    kable %>%
+    kable_styling(full_width = F)
+```
+
+And most of the **injuries**
+
+```{r}
+health_data %>%
+    select(EVTYPE, INJURIES, PERC.INJURIES) %>%
+    arrange(desc(INJURIES)) %>%
+    head(10) %>%
+    kable %>%
+    kable_styling(full_width = F)
+```
+
+So it’t clear that **TORNADO** is by far the the most harmful of the events in the list, but **HEAT**, **FLOOD**, **THUNDERSTORM** and **LIGHTNING** are also related to high numbers on both tables.
+
+It is also important to consider the inconsistencies of the `EVTYPE` field pointed before, so let’s create a new table `health_data2`, but now only focusing on this five types of events, and searching for every `EVTYPE` that has relation to it.
+
+```{r}
+events <- c("TORNADO" = "TORNADO",
+            "FLOOD" = "FLOOD",
+            "HEAT" = "HEAT",
+            "THUNDERSTORM" = "THUNDERSTORM|TSTM",
+            "LIGHTNING" = "LIGHTNING"
+            )
+
+health_data_perc <- data.frame()
+
+for (event in names(events)) {
+    index <- grepl(events[event], health_data$EVTYPE)
+    
+    event_row <- data.frame("EVTYPE" = c(event),
+                            "PERC.FATALITIES" = round(
+                                sum(health_data[index, "PERC.FATALITIES"]),
+                                2),
+                            "PERC.INJURIES" = round(
+                                sum(health_data[index, "PERC.INJURIES"]),
+                                2),
+                            row.names = NULL)
+
+    health_data_perc <- rbind(health_data_perc,
+                              event_row)
+}
+
+health_data_perc %>%
+    arrange(desc(PERC.FATALITIES), desc(PERC.INJURIES)) %>%
+    kable() %>%
+    kable_styling(full_width = F)
+```
+
+The changes were not big, so it is a sign that the inconsistencies didn’t have much influence in the results.
+
+It is import to point that this last table indicates the percentage of injuries/fatalities relatated to each event type, so some of the them maybe included in more than one event type. e.g.: an injury may be related to both **lightning** and **thunderstorm** if the `EVTYPE` fo that observation was somethin like “*TSTM / LIGHTNING*”.
+
+## Economy
+
+An important point in this records is to verify the magnitude of the damage in dollars. [The Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf), in item 2.7, says “Estimates should be rounded to three significant digits, followed by an alphabetical character signifying the magnitude of the number, i.e., 1.55B for $1,550,000,000.
+
+Alphabetical characters used to signify magnitude include “K” for thousands, “M” for millions, and “B” for billions”. So let’s create a variable with that information.
+
+```{r}
+magnitude <- c("K" = 10**3,
+               "M" = 10**6,
+               "B" = 10**9
+               )
+```
+
+Now let’s see the information available on each column.
+
+```{r}
+unique(StormData$PROPDMGEXP)
+unique(StormData$CROPDMGEXP)
+```
+
+There are some unexpected values in these fields, let’s check how often they appear. But first rulling out rows in which the damage was 0, since in these cases the magnitude won’t matter.
+
+```{r}
+economy_data <- StormData %>%
+    filter(CROPDMG > 0 | PROPDMG > 0)
+
+1-nrow(economy_data[toupper(economy_data$CROPDMGEXP) %in% names(magnitude),]) / nrow(economy_data)
+
+1-nrow(economy_data[toupper(economy_data$PROPDMGEXP) %in% names(magnitude),]) / nrow(economy_data)
+```
+
+It seems like the strange indicators represent less than 2% of the records in the **Property Damage**. However, in the **Crop Damage** the number is pretty high. Let’s see what it might be.
+
+```{r}
+economy_data %>%
+    group_by(CROPDMGEXP) %>%
+    summarise(n = n()) %>%
+    kable() %>%
+    kable_styling(full_width = F)
+```
+
+From the table, it is possible to see that this column was left blank in most of the records, which is strange, but since the formulas to calculate the estimates in APPENDIX B of the [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) technically allows values of less than 1k dollars we will assume that the magnitude is 1.
+
+Let’s update the `economy_data` with the correct values for the damages. Ruling out the records with invalid values for the magnitude.
+
+```{r}
+economy_data <- economy_data %>%
+    mutate(CROPDMGMAG = ifelse(CROPDMGEXP == "", 1, 0),
+           PROPDMGMAG = ifelse(PROPDMGEXP == "", 1, 0)) %>%
+    mutate(CROPDMGMAG = ifelse(toupper(CROPDMGEXP) %in% names(magnitude),
+                               magnitude[toupper(CROPDMGEXP)],
+                               CROPDMGMAG),
+           PROPDMGMAG = ifelse(toupper(PROPDMGEXP) %in% names(magnitude),
+                               magnitude[toupper(PROPDMGEXP)],
+                               PROPDMGMAG)) %>%
+    mutate(PROPDMG = PROPDMG * PROPDMGMAG,
+           CROPDMG = CROPDMG * CROPDMGMAG) %>%
+    select(EVTYPE, PROPDMG, CROPDMG) %>%
+    group_by(EVTYPE) %>%
+    summarise(PROPDMG = sum(PROPDMG),
+            CROPDMG = sum(CROPDMG)) %>%
+    arrange(desc(CROPDMG+PROPDMG))
+
+economy_data %>%
+    head(20) %>%
+    kable(format.args = list(big.mark = ",")) %>%
+    kable_styling(full_width = F)
+```
+
+Let’s use the same method from the health analysis, and try to group related event types to create a cleaner table.
+
+Looking at the table above, I chose do create these ten groups: **TORNADO**, **FLOOD**, **HURRICANE**, **DROUOGHT**, **HAIL**, **STORM**, **FIRE**, **RAIN**, **COLD**, **SNOW**.
+
+```{r}
+events <- c("TORNADO" = "TORNADO",
+            "FLOOD" = "FLOOD",
+            "HURRICANE" = "HURRICANE",
+            "DROUOGHT" = "DROUGHT",
+            "HAIL" = "HAIL",
+            "STORM" = "STORM|TSTM",
+            "FIRE" = "FIRE",
+            "RAIN" = "RAIN",
+            "COLD" = "COLD",
+            "SNOW"= "SNOW")
+
+economy_data_clean <- data.frame()
+
+for (event in names(events)) {
+    index <- grepl(events[event], economy_data$EVTYPE)
+
+    event_row <- data.frame("EVTYPE" = c(event),
+                            "PROPDMG" = sum(economy_data[index, "PROPDMG"]),
+                            "CROPDMG" = sum(economy_data[index, "CROPDMG"]),
+                            row.names = NULL)
+    economy_data_clean <- rbind(economy_data_clean,
+                                event_row)
+}
+
+economy_data_clean %>%
+    arrange(desc(CROPDMG + PROPDMG)) %>%
+    kable(format.args = list(big.mark = ",")) %>%
+    kable_styling(full_width = F)
+```
+
+## Results
+
+### Population health
+
+From the data processing phase, it became clear that **TORNADOS** are a great threat to population health in the US, even when compared to other harmful events. Although **HEAT** is responsible for an alarming number of fatalities too.
+
+```{r}
+fatality_data <- health_data_perc %>%
+    select(EVTYPE, PERC.FATALITIES) %>%
+    mutate(OUTCOME = "FATALITY") %>%
+    rename(FREQUENCY = PERC.FATALITIES)
+
+injury_data <- health_data_perc %>%
+    select(EVTYPE, PERC.INJURIES) %>%
+    mutate(OUTCOME = "INJURY") %>%
+    rename(FREQUENCY = PERC.INJURIES)
+
+tidy_health_data <- rbind(fatality_data, injury_data)
+
+ggplot(tidy_health_data,
+       aes(EVTYPE, FREQUENCY, fill=OUTCOME)) +
+    geom_bar(stat="identity", position = "dodge") +
+    coord_cartesian(ylim=c(0,1)) +
+    labs(title="Percentage of Injuries/Fatalities\nrelated to each event type",
+         x = "Event type",
+         y = "Percentage",
+         fill = "Record Type") +
+    scale_fill_grey() +
+    theme_light()
+```
+
+### Economy
+
+For the economy, FLOODS are a huge problem, but **TORNADOES**, **STORMS** and **HURICANES** also cause great damage. It is also important to point that, although not causing great property damage, **DROUGHTS** are a big cause of crop damage.
+
+```{r}
+propdmg_data <- economy_data_clean %>%
+    select(EVTYPE, PROPDMG) %>%
+    mutate(DMGTYPE = "PROPERTY") %>%
+    rename(VALUE = PROPDMG)
+
+cropdmg_data <- economy_data_clean %>%
+    select(EVTYPE, CROPDMG) %>%
+    mutate(DMGTYPE = "CROP") %>%
+    rename(VALUE = CROPDMG)
+
+tidy_economy_data <- rbind(propdmg_data, cropdmg_data) %>%
+    mutate(VALUE = VALUE/10**9)
+
+ggplot(tidy_economy_data,
+       aes(EVTYPE, VALUE, fill=DMGTYPE)) +
+    geom_bar(stat="identity") +
+    labs(title="Total damage\nrelated to each event type",
+         x = "Event type",
+         y = "Damage in billions of US$",
+         fill = "Damage Type") +
+    scale_fill_grey() +
+    theme_light() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
